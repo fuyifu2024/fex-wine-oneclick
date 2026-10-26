@@ -1,5 +1,7 @@
 # fex-wine-oneclick
 
+**中文** | [English](README.en.md)
+
 在 ARM64 Ubuntu（树莓派 5 等）上一键装好 **FEX-Emu + x86-64 Wine**，让 Windows 的 `.exe` **双击就能打开**。
 
 > 已在 Raspberry Pi 5（4GB）\+ Ubuntu 26.04 LTS (resolute, aarch64) 上实测通过。
