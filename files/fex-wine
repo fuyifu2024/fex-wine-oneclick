@@ -1,0 +1,89 @@
+#!/bin/bash
+# fex-wine —— 用 FEX(把 x86-64 翻译成 ARM64) + Wine 打开 Windows 程序
+#
+# 由 fex-wine-oneclick 安装：https://github.com/fuyifu2024/fex-wine-oneclick
+#
+# 用法:   fex-wine <程序.exe> [参数...]
+# 双击:   文件管理器里双击 .exe 即走这里
+#
+# 行为:   程序在原地运行（不复制），工作目录 = exe 所在目录；
+#         图形程序直接开窗；控制台程序自动开一个终端窗口看输出；
+#         全部输出另存 ~/.fex-wine.log。首次运行慢（FEX 要 JIT 编译）。
+#         设 FEX_WINE_NO_TERMINAL=1 可让控制台程序在当前终端里直接跑（方便脚本化）。
+set -uo pipefail
+
+if [ $# -lt 1 ]; then
+  echo "用法: fex-wine <程序.exe> [参数...]"
+  exit 1
+fi
+exe=$(readlink -f -- "$1")
+shift
+
+# 自检：前缀没装好时给出明确提示（例如没有先跑 install.sh）
+if [ ! -s "$HOME/.wine-fex/system.reg" ]; then
+  echo "错误: 还没安装/初始化 fex-wine 环境，请先运行仓库里的 ./install.sh" >&2
+  command -v zenity >/dev/null && zenity --error --text="还没安装 FEX + Wine 环境。\n请先运行安装脚本（./install.sh）。" 2>/dev/null
+  exit 1
+fi
+
+if [ ! -f "$exe" ]; then
+  echo "找不到文件: $exe" >&2
+  command -v zenity >/dev/null && zenity --error --text="找不到文件：$exe" 2>/dev/null
+  exit 1
+fi
+
+LOG="$HOME/.fex-wine.log"
+dir=$(dirname -- "$exe")
+
+# X 认证文件兜底（GNOME 用 mutter 私有文件；正常从会话继承）
+if [ -z "${XAUTHORITY:-}" ] || [ ! -r "${XAUTHORITY:-/nonexistent}" ]; then
+  for p in $(pgrep -x Xwayland 2>/dev/null); do
+    a=$(tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | sed -n 's/.*-auth \([^ ]*\).*/\1/p')
+    if [ -n "$a" ] && [ -r "$a" ]; then
+      export XAUTHORITY="$a"
+      break
+    fi
+  done
+fi
+: "${DISPLAY:=:0}"
+export DISPLAY
+
+# PE 头里的 Subsystem 字段：3 = 控制台程序（2 = 图形程序）
+sub=$(python3 - "$exe" 2>/dev/null <<'PY' || echo 2
+import struct, sys
+b = open(sys.argv[1], "rb").read(0x400)
+e = struct.unpack_from("<I", b, 0x3C)[0]
+print(struct.unpack_from("<H", b, e + 0x5C)[0])
+PY
+)
+
+# 用 Z:\ 形式的"Windows 路径"启动 —— wine 才能把程序目录算成正常的盘符路径。
+# 直接用 unix 路径的话，Unity 等引擎会看到 "unix/..." 而找不到同目录的 *_Data。
+dos="Z:$(printf '%s' "$exe" | sed 's|/|\\|g')"
+# 工作目录走"合成根"形式，wine 才能把它转成对应的 Windows 工作目录
+cdir="$dir"
+[ -d "$HOME/.fex-zroot$dir" ] && cdir="$HOME/.fex-zroot$dir"
+
+qargs=""
+for a in "$@"; do qargs+=" $(printf '%q' "$a")"; done
+guest_cmd="export WINEPREFIX=\$HOME/.wine-fex LANG=C.UTF-8; cd $(printf '%q' "$cdir"); exec /usr/lib/wine/wine64 $(printf '%q' "$dos")$qargs"
+
+if [ "$sub" = "3" ] && [ -n "${FEX_WINE_NO_TERMINAL:-}" ]; then
+  # 脚本化模式：控制台程序就在当前终端跑，输出同时写日志
+  FEXBash -c "$guest_cmd" 2>&1 | tee -a "$LOG"
+  exit "${PIPESTATUS[0]}"
+fi
+
+if [ "$sub" = "3" ] && command -v ptyxis >/dev/null; then
+  # 控制台程序 → 开终端看输出
+  inner="FEXBash -c $(printf '%q' "$guest_cmd") 2>&1 | tee -a $(printf '%q' "$LOG")"
+  exec ptyxis -x "$inner"
+fi
+
+# 图形程序 → 安静运行；失败弹窗提示
+FEXBash -c "$guest_cmd" >>"$LOG" 2>&1
+rc=$?
+if [ $rc -ne 0 ] && command -v zenity >/dev/null; then
+  zenity --error --width=560 --text="FEX+Wine 运行失败（退出码 $rc）\n\n日志：$LOG\n\n$(tail -c 600 "$LOG")" 2>/dev/null
+fi
+exit $rc

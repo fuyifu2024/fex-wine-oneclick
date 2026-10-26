@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Windows 程序（FEX + Wine）
+GenericName=Windows 程序运行器
+Comment=用 FEX 转译层 + Wine 运行 Windows 的 .exe 程序
+Exec=@WRAPPER@ %f
+Icon=application-x-executable
+Terminal=false
+Categories=Utility;
+MimeType=application/vnd.microsoft.portable-executable;application/x-ms-dos-executable;

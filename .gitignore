@@ -1,0 +1,4 @@
+# 运行产物
+*.log
+.cache/
+RootFS/
